@@ -16,7 +16,7 @@ def to_mono_lr(audio: np.ndarray) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
 # ANALIZADOR (UI) - Analizador de Mastering con informe PDF
 # Estilo informe PDF: WAVE MUSIC STUDIO
 # Logo PDF (arriba izquierda): C:\PYTHON314\LOGO.PNG
-# Logo WEB (Breakwave):       C:\PYTHON314\LOGO.PNG
+# Logo WEB:                  C:\PYTHON314\LOGO.PNG
 # Firma: Gerard Fortuny
 # ============================================================
 
@@ -56,7 +56,7 @@ from reportlab.lib import colors
 # =========================
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 LOGO_PATH = os.path.join(BASE_DIR, "LOGO.PNG")          # PDF (WAVE MUSIC STUDIO)
-BREAKWAVE_LOGO_PATH = os.path.join(BASE_DIR, "LOGO.PNG")  # WEB (Breakwave) ✅ tu logo real
+WEB_LOGO_PATH = os.path.join(BASE_DIR, "LOGO.PNG")  # WEB ✅ tu logo real
 ENGINEER = "Gerard Fortuny"
 STUDIO = "WAVE MUSIC STUDIO"
 
@@ -291,7 +291,7 @@ def band_energy_db(freq: np.ndarray, psd: np.ndarray, f_lo: float, f_hi: float) 
     mask = (freq >= f_lo) & (freq < f_hi)
     if not np.any(mask):
         return -200.0
-    e = np.trapz(psd[mask], freq[mask])
+    e = np.trapezoid(psd[mask], freq[mask])
     return float(10.0 * np.log10(max(e, 1e-20)))
 
 
@@ -1169,26 +1169,26 @@ def render_player_with_eq(audio_bytes: bytes, mime: str, lufs_t: Optional[np.nda
 
 
 # =========================
-# HEADER (logo Breakwave + título)
+# HEADER (logo + título)
 # =========================
 def show_header():
-    bw_logo = None
-    if os.path.exists(BREAKWAVE_LOGO_PATH):
+    web_logo = None
+    if os.path.exists(WEB_LOGO_PATH):
         try:
-            with open(BREAKWAVE_LOGO_PATH, "rb") as f:
-                bw_logo = f.read()
+            with open(WEB_LOGO_PATH, "rb") as f:
+                web_logo = f.read()
         except Exception:
-            bw_logo = None
+            web_logo = None
 
-    if bw_logo:
+    if web_logo:
         import base64
-        b64 = base64.b64encode(bw_logo).decode("utf-8")
+        b64 = base64.b64encode(web_logo).decode("utf-8")
         st.markdown(f"""
 <div class="brand-row">
   <div class="brand-left">
     <div>
       <div class="brand-title">ANALIZADOR</div>
-      <div class="brand-sub">Breakwave · Mastering Analysis · {STUDIO}</div>
+      <div class="brand-sub">Mastering Analysis · {STUDIO}</div>
     </div>
   </div>
   <div class="brand-right">
@@ -1209,7 +1209,7 @@ def show_header():
 </div>
 """, unsafe_allow_html=True)
 
-        st.warning(f"No encuentro el logo en: {BREAKWAVE_LOGO_PATH}")
+        st.warning(f"No encuentro el logo en: {WEB_LOGO_PATH}")
 
 
 # =========================
@@ -1347,7 +1347,7 @@ with right:
         with colA:
             analyze_btn = st.button("🔎 ANALIZAR", use_container_width=True, type="primary")
         with colB:
-            st.markdown('<span class="badge">BREAKWAVE</span><span class="badge">EQ LIVE</span><span class="badge">PDF</span><span class="badge">LUFS</span>', unsafe_allow_html=True)
+            st.markdown('<span class="badge">EQ LIVE</span><span class="badge">PDF</span><span class="badge">LUFS</span>', unsafe_allow_html=True)
     else:
         st.info("Sube un audio para ver reproductor, EQ en tiempo real, portada, waveform y activar el análisis.")
     st.markdown('</div>', unsafe_allow_html=True)
