@@ -1,4 +1,3 @@
-
 def to_mono_lr(audio: np.ndarray) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
     """Devuelve mono, left, right (float64). Acepta (n,) o (n,2)."""
     if audio is None or len(audio) == 0:
@@ -372,7 +371,14 @@ def fig_spectrum(y: np.ndarray, sr: int, title: str) -> Tuple[plt.Figure, np.nda
     return fig, f, pxx
 
 def fig_spectrogram(y: np.ndarray, sr: int, title: str) -> plt.Figure:
-    n_fft = 2048
+    # Versión ligera para nube: limita duración y SR para reducir memoria
+    max_seconds = 180
+    if len(y) > sr * max_seconds:
+        y = y[: sr * max_seconds]
+    if sr > 22050:
+        y = librosa.resample(y.astype(np.float32), orig_sr=sr, target_sr=22050, res_type="soxr_hq")
+        sr = 22050
+    n_fft = 1024
     hop = 512
     S = np.abs(librosa.stft(y.astype(np.float32), n_fft=n_fft, hop_length=hop))
     S_db = librosa.amplitude_to_db(S, ref=np.max)
@@ -381,7 +387,7 @@ def fig_spectrogram(y: np.ndarray, sr: int, title: str) -> plt.Figure:
         S_db, origin="lower", aspect="auto",
         extent=[0, len(y)/sr, 0, sr/2]
     )
-    plt.ylim(0, 20000)
+    plt.ylim(0, min(20000, sr/2))
     plt.title(title)
     plt.xlabel("Tiempo (s)")
     plt.ylabel("Frecuencia (Hz)")
@@ -565,7 +571,7 @@ def analyze_audio(mono: np.ndarray, left: np.ndarray, right: np.ndarray, sr: int
 
     # True peak aprox (oversampling x4)
     try:
-        mono_os = librosa.resample(mono.astype(np.float32), orig_sr=sr_full, target_sr=sr_full*4, res_type="kaiser_best")
+        mono_os = librosa.resample(mono.astype(np.float32), orig_sr=sr, target_sr=sr*2, res_type="soxr_hq")
         true_peak = _db(float(np.max(np.abs(mono_os))))
     except Exception:
         true_peak = _db(_peak(mono))
@@ -1254,15 +1260,13 @@ with left:
     st.markdown('<div class="card">', unsafe_allow_html=True)
     st.subheader("📥 Cargar pista")
     uploaded = st.file_uploader(
-        "Audio (WAV/FLAC/MP3/M4A/OGG/AIFF)",
+        "Audio (WAV/FLAC/MP3/M4A/OGG/AIFF) · solo 1 archivo por análisis",
         type=["wav", "flac", "mp3", "m4a", "ogg", "aiff"],
         key="main_uploader",
+        accept_multiple_files=False,
     )
-    ab_uploaded = st.file_uploader(
-        "🔁 Comparador A/B (opcional): carga aquí el ORIGINAL o el MASTER para comparar",
-        type=["wav", "flac", "mp3", "m4a", "ogg", "aiff"],
-        key="ab_uploader",
-    )
+    ab_uploaded = None
+    st.caption("Solo se permite una pista por análisis. El comparador A/B queda desactivado por ahora para simplificar la carga.")
     client_name = st.session_state.get("client_name","")
     st.markdown("<hr/>", unsafe_allow_html=True)
     st.markdown("**Tramo a analizar (opcional)**")
@@ -1323,7 +1327,7 @@ with right:
             peak_dbfs = _db(_peak(mono))
             rms_dbfs = _db(_rms(mono))
             try:
-                mono_os = librosa.resample(mono.astype(np.float32), orig_sr=sr_full, target_sr=sr_full*4, res_type="kaiser_best")
+                mono_os = librosa.resample(mono.astype(np.float32), orig_sr=sr, target_sr=sr*2, res_type="soxr_hq")
                 tp_dbfs = _db(float(np.max(np.abs(mono_os))))
             except Exception:
                 tp_dbfs = peak_dbfs
@@ -1505,26 +1509,27 @@ if uploaded and analyze_btn:
     st.markdown('</div>', unsafe_allow_html=True)
 
     st.markdown('<div class="card">', unsafe_allow_html=True)
-    st.subheader("🖨️ Imprimir informe (PDF)")
-    st.caption(f"Logo PDF: {LOGO_PATH} (asegúrate de que existe).")
+    st.subheader("🖨️ Informe PDF (opcional)")
+    st.caption("Para ahorrar recursos, el PDF se genera solo cuando lo pides.")
 
-    embedded_cover = extract_cover_bytes(audio_bytes, uploaded.name)
-    final_cover = embedded_cover if embedded_cover else st.session_state.manual_cover_bytes
+    if st.button("Generar informe PDF", use_container_width=True):
+        with st.spinner("Generando PDF..."):
+            embedded_cover = extract_cover_bytes(audio_bytes, uploaded.name)
+            final_cover = embedded_cover if embedded_cover else st.session_state.manual_cover_bytes
 
-    pdf_bytes = render_pdf_wave_music_studio(
-        track_title=os.path.splitext(uploaded.name)[0],
-        client_name=client_name,
-        result=result,
-        cover_bytes=final_cover,
-        logo_path=LOGO_PATH,
-        engineer_name=ENGINEER
-    )
-
-    st.download_button(
-        label="🖨️ IMPRIMIR INFORME (PDF WAVE MUSIC STUDIO)",
-        data=pdf_bytes,
-        file_name=f"{os.path.splitext(uploaded.name)[0]}_WAVE_MUSIC_STUDIO_Report.pdf",
-        mime="application/pdf",
-        use_container_width=True
-    )
+            pdf_bytes = render_pdf_wave_music_studio(
+                track_title=os.path.splitext(uploaded.name)[0],
+                client_name=client_name,
+                result=result,
+                cover_bytes=final_cover,
+                logo_path=LOGO_PATH,
+                engineer_name=ENGINEER
+            )
+            st.download_button(
+                label="⬇️ Descargar informe PDF",
+                data=pdf_bytes,
+                file_name=f"{os.path.splitext(uploaded.name)[0]}_WAVE_MUSIC_STUDIO_Report.pdf",
+                mime="application/pdf",
+                use_container_width=True
+            )
     st.markdown('</div>', unsafe_allow_html=True)
