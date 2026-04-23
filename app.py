@@ -1,3 +1,4 @@
+
 def to_mono_lr(audio: np.ndarray) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
     """Devuelve mono, left, right (float64). Acepta (n,) o (n,2)."""
     if audio is None or len(audio) == 0:
@@ -64,6 +65,9 @@ TARGETS = {
     "club_lufs_range": (-10.0, -7.0),
     "true_peak_max_dbtp": -1.0,
 }
+
+MAX_UPLOAD_MB = 80
+MAX_UPLOAD_BYTES = MAX_UPLOAD_MB * 1024 * 1024
 
 # =========================
 # STREAMLIT UI SETUP
@@ -1253,6 +1257,10 @@ st.write("Carga una pista → portada → reproductor con **EQ en tiempo real** 
 
 if "manual_cover_bytes" not in st.session_state:
     st.session_state.manual_cover_bytes = None
+if "generated_pdf_bytes" not in st.session_state:
+    st.session_state.generated_pdf_bytes = None
+if "generated_pdf_name" not in st.session_state:
+    st.session_state.generated_pdf_name = None
 
 left, right = st.columns([1.05, 1.95], gap="large")
 
@@ -1285,6 +1293,16 @@ with right:
     if uploaded:
         audio_bytes = uploaded.getvalue()
 
+        if len(audio_bytes) > MAX_UPLOAD_BYTES:
+            st.error(f"El archivo supera el límite de {MAX_UPLOAD_MB} MB. Sube una pista de hasta {MAX_UPLOAD_MB} MB.")
+            st.markdown('</div>', unsafe_allow_html=True)
+            st.stop()
+
+        # Reinicia el PDF si cambia el archivo
+        if st.session_state.get("generated_pdf_name") != uploaded.name:
+            st.session_state.generated_pdf_bytes = None
+            st.session_state.generated_pdf_name = uploaded.name
+
         embedded_cover = extract_cover_bytes(audio_bytes, uploaded.name)
         cover_bytes = embedded_cover if embedded_cover else st.session_state.manual_cover_bytes
 
@@ -1294,12 +1312,7 @@ with right:
             if cover_bytes:
                 st.image(cover_bytes, use_container_width=True)
             else:
-                st.info("No se detecta portada embebida.")
-                manual_cover = st.file_uploader("Subir portada (PNG/JPG)", type=["png", "jpg", "jpeg"])
-                if manual_cover:
-                    st.session_state.manual_cover_bytes = manual_cover.getvalue()
-                    cover_bytes = st.session_state.manual_cover_bytes
-                    st.image(cover_bytes, use_container_width=True)
+                st.info("No se detecta portada embebida. Para mantener el flujo simple, el análisis usa solo una pista por vez y no permite adjuntar archivos extra desde esta pantalla.")
 
         # Precompute LUFS series for synced display (quick)
         y_full, sr_full = load_audio_any(audio_bytes, uploaded.name)
@@ -1361,6 +1374,9 @@ with right:
 # =========================
 if uploaded and analyze_btn:
     audio_bytes = uploaded.getvalue()
+    if len(audio_bytes) > MAX_UPLOAD_BYTES:
+        st.error(f"El archivo supera el límite de {MAX_UPLOAD_MB} MB. Sube una pista de hasta {MAX_UPLOAD_MB} MB.")
+        st.stop()
     y, sr = load_audio_any(audio_bytes, uploaded.name)
     l = y[:, 0]
     r = y[:, 1] if y.shape[1] > 1 else y[:, 0]
@@ -1517,7 +1533,7 @@ if uploaded and analyze_btn:
             embedded_cover = extract_cover_bytes(audio_bytes, uploaded.name)
             final_cover = embedded_cover if embedded_cover else st.session_state.manual_cover_bytes
 
-            pdf_bytes = render_pdf_wave_music_studio(
+            st.session_state.generated_pdf_bytes = render_pdf_wave_music_studio(
                 track_title=os.path.splitext(uploaded.name)[0],
                 client_name=client_name,
                 result=result,
@@ -1525,11 +1541,15 @@ if uploaded and analyze_btn:
                 logo_path=LOGO_PATH,
                 engineer_name=ENGINEER
             )
-            st.download_button(
-                label="⬇️ Descargar informe PDF",
-                data=pdf_bytes,
-                file_name=f"{os.path.splitext(uploaded.name)[0]}_WAVE_MUSIC_STUDIO_Report.pdf",
-                mime="application/pdf",
-                use_container_width=True
-            )
+            st.session_state.generated_pdf_name = uploaded.name
+        st.success("PDF generado. Ya puedes descargarlo.")
+
+    if st.session_state.get("generated_pdf_bytes") and st.session_state.get("generated_pdf_name") == uploaded.name:
+        st.download_button(
+            label="⬇️ Descargar informe PDF",
+            data=st.session_state.generated_pdf_bytes,
+            file_name=f"{os.path.splitext(uploaded.name)[0]}_WAVE_MUSIC_STUDIO_Report.pdf",
+            mime="application/pdf",
+            use_container_width=True
+        )
     st.markdown('</div>', unsafe_allow_html=True)
