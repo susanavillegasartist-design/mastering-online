@@ -16,7 +16,7 @@ def to_mono_lr(audio: np.ndarray) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
 # ANALIZADOR (UI) - Analizador de Mastering con informe PDF
 # Estilo informe PDF: WAVE MUSIC STUDIO
 # Logo PDF (arriba izquierda): C:\PYTHON314\LOGO.PNG
-# Logo WEB:                  C:\PYTHON314\LOGO.PNG
+# Logo WEB:                    LOGO.PNG
 # Firma: Gerard Fortuny
 # ============================================================
 
@@ -65,9 +65,6 @@ TARGETS = {
     "club_lufs_range": (-10.0, -7.0),
     "true_peak_max_dbtp": -1.0,
 }
-
-MAX_UPLOAD_MB = 80
-MAX_UPLOAD_BYTES = MAX_UPLOAD_MB * 1024 * 1024
 
 # =========================
 # STREAMLIT UI SETUP
@@ -294,7 +291,7 @@ def band_energy_db(freq: np.ndarray, psd: np.ndarray, f_lo: float, f_hi: float) 
     mask = (freq >= f_lo) & (freq < f_hi)
     if not np.any(mask):
         return -200.0
-    e = np.trapezoid(psd[mask], freq[mask])
+    e = np.trapz(psd[mask], freq[mask])
     return float(10.0 * np.log10(max(e, 1e-20)))
 
 
@@ -375,14 +372,7 @@ def fig_spectrum(y: np.ndarray, sr: int, title: str) -> Tuple[plt.Figure, np.nda
     return fig, f, pxx
 
 def fig_spectrogram(y: np.ndarray, sr: int, title: str) -> plt.Figure:
-    # Versión ligera para nube: limita duración y SR para reducir memoria
-    max_seconds = 180
-    if len(y) > sr * max_seconds:
-        y = y[: sr * max_seconds]
-    if sr > 22050:
-        y = librosa.resample(y.astype(np.float32), orig_sr=sr, target_sr=22050, res_type="soxr_hq")
-        sr = 22050
-    n_fft = 1024
+    n_fft = 2048
     hop = 512
     S = np.abs(librosa.stft(y.astype(np.float32), n_fft=n_fft, hop_length=hop))
     S_db = librosa.amplitude_to_db(S, ref=np.max)
@@ -391,7 +381,7 @@ def fig_spectrogram(y: np.ndarray, sr: int, title: str) -> plt.Figure:
         S_db, origin="lower", aspect="auto",
         extent=[0, len(y)/sr, 0, sr/2]
     )
-    plt.ylim(0, min(20000, sr/2))
+    plt.ylim(0, 20000)
     plt.title(title)
     plt.xlabel("Tiempo (s)")
     plt.ylabel("Frecuencia (Hz)")
@@ -575,7 +565,7 @@ def analyze_audio(mono: np.ndarray, left: np.ndarray, right: np.ndarray, sr: int
 
     # True peak aprox (oversampling x4)
     try:
-        mono_os = librosa.resample(mono.astype(np.float32), orig_sr=sr, target_sr=sr*2, res_type="soxr_hq")
+        mono_os = librosa.resample(mono.astype(np.float32), orig_sr=sr_full, target_sr=sr_full*4, res_type="kaiser_best")
         true_peak = _db(float(np.max(np.abs(mono_os))))
     except Exception:
         true_peak = _db(_peak(mono))
@@ -1182,17 +1172,17 @@ def render_player_with_eq(audio_bytes: bytes, mime: str, lufs_t: Optional[np.nda
 # HEADER (logo + título)
 # =========================
 def show_header():
-    web_logo = None
+    bw_logo = None
     if os.path.exists(WEB_LOGO_PATH):
         try:
             with open(WEB_LOGO_PATH, "rb") as f:
-                web_logo = f.read()
+                bw_logo = f.read()
         except Exception:
-            web_logo = None
+            bw_logo = None
 
-    if web_logo:
+    if bw_logo:
         import base64
-        b64 = base64.b64encode(web_logo).decode("utf-8")
+        b64 = base64.b64encode(bw_logo).decode("utf-8")
         st.markdown(f"""
 <div class="brand-row">
   <div class="brand-left">
@@ -1226,7 +1216,7 @@ def show_header():
 # APP
 # =========================
 show_header()
-client_name = st.text_input("Cliente (opcional)", value="", key="client_name")
+client_name = ""
 
 # =========================
 # MANUAL / AYUDA
@@ -1253,33 +1243,60 @@ with st.expander("📘 MANUAL DEL ANALIZADOR (qué significa cada métrica)"):
 > Nota: el análisis es técnico y orientativo. La decisión final depende del estilo (club/streaming/vinilo) y de la referencia.
 """)
 
-st.write("Carga una pista → portada → reproductor con **EQ en tiempo real** → **ANALIZAR** → **IMPRIMIR PDF** (WAVE MUSIC STUDIO).")
+st.write("Sube **una sola pista** (máx. 80 MB) → escucha la previsualización → pulsa **ANALIZAR** → genera y descarga tu **informe PDF**.")
 
-if "manual_cover_bytes" not in st.session_state:
-    st.session_state.manual_cover_bytes = None
-if "generated_pdf_bytes" not in st.session_state:
-    st.session_state.generated_pdf_bytes = None
-if "generated_pdf_name" not in st.session_state:
-    st.session_state.generated_pdf_name = None
+# Estado de pista cargada (para evitar reemplazos accidentales y ocultar el uploader)
+if "track_bytes" not in st.session_state:
+    st.session_state.track_bytes = None
+    st.session_state.track_name = None
+    st.session_state.track_type = None
+if "pdf_bytes" not in st.session_state:
+    st.session_state.pdf_bytes = None
+    st.session_state.pdf_name = None
 
 left, right = st.columns([1.05, 1.95], gap="large")
 
 with left:
     st.markdown('<div class="card">', unsafe_allow_html=True)
     st.subheader("📥 Cargar pista")
-    uploaded = st.file_uploader(
-        "Audio (WAV/FLAC/MP3/M4A/OGG/AIFF) · solo 1 archivo por análisis",
-        type=["wav", "flac", "mp3", "m4a", "ogg", "aiff"],
-        key="main_uploader",
-        accept_multiple_files=False,
-    )
-    ab_uploaded = None
-    st.caption("Solo se permite una pista por análisis. El comparador A/B queda desactivado por ahora para simplificar la carga.")
-    client_name = st.session_state.get("client_name","")
+
+    if st.session_state.track_bytes is None:
+        uploaded = st.file_uploader(
+            "Audio (WAV/FLAC/MP3/M4A/OGG/AIFF) · una sola pista · máximo 80 MB",
+            type=["wav", "flac", "mp3", "m4a", "ogg", "aiff"],
+            accept_multiple_files=False,
+            key="main_uploader",
+            help="Sube una sola pista por análisis. Tamaño máximo recomendado: 80 MB."
+        )
+        if uploaded is not None:
+            audio_bytes_tmp = uploaded.getvalue()
+            if len(audio_bytes_tmp) > 80 * 1024 * 1024:
+                st.error("El archivo supera el límite de 80 MB. Sube una pista más ligera o exportada a menor peso.")
+                st.stop()
+            st.session_state.track_bytes = audio_bytes_tmp
+            st.session_state.track_name = uploaded.name
+            st.session_state.track_type = uploaded.type or "audio/wav"
+            st.session_state.pdf_bytes = None
+            st.session_state.pdf_name = None
+            st.rerun()
+    else:
+        st.success(f"Pista cargada: {st.session_state.track_name}")
+        st.caption("Para cargar otra pista, primero pulsa en ‘Quitar pista y empezar de nuevo’. Así evitamos reemplazos accidentales.")
+        if st.button("🗑️ Quitar pista y empezar de nuevo", use_container_width=True):
+            st.session_state.track_bytes = None
+            st.session_state.track_name = None
+            st.session_state.track_type = None
+            st.session_state.pdf_bytes = None
+            st.session_state.pdf_name = None
+            st.rerun()
+
     st.markdown("<hr/>", unsafe_allow_html=True)
     st.markdown("**Tramo a analizar (opcional)**")
-    st.markdown('<div class="small">Muévete en el reproductor y elige el tramo exacto aquí. Si lo dejas completo, analiza toda la pista.</div>', unsafe_allow_html=True)
+    st.markdown('<div class="small">Puedes analizar toda la pista o seleccionar un tramo concreto. Si lo dejas completo, el análisis usará el archivo entero.</div>', unsafe_allow_html=True)
     st.markdown("</div>", unsafe_allow_html=True)
+
+# Variable de compatibilidad para el resto de la interfaz
+uploaded = st.session_state.track_bytes is not None
 
 with right:
     st.markdown('<div class="card">', unsafe_allow_html=True)
@@ -1291,20 +1308,12 @@ with right:
     end_s = 0.0
 
     if uploaded:
-        audio_bytes = uploaded.getvalue()
+        audio_bytes = st.session_state.track_bytes
+        track_name = st.session_state.track_name
+        track_type = st.session_state.track_type or "audio/wav"
 
-        if len(audio_bytes) > MAX_UPLOAD_BYTES:
-            st.error(f"El archivo supera el límite de {MAX_UPLOAD_MB} MB. Sube una pista de hasta {MAX_UPLOAD_MB} MB.")
-            st.markdown('</div>', unsafe_allow_html=True)
-            st.stop()
-
-        # Reinicia el PDF si cambia el archivo
-        if st.session_state.get("generated_pdf_name") != uploaded.name:
-            st.session_state.generated_pdf_bytes = None
-            st.session_state.generated_pdf_name = uploaded.name
-
-        embedded_cover = extract_cover_bytes(audio_bytes, uploaded.name)
-        cover_bytes = embedded_cover if embedded_cover else st.session_state.manual_cover_bytes
+        embedded_cover = extract_cover_bytes(audio_bytes, track_name)
+        cover_bytes = embedded_cover
 
         c1, c2 = st.columns([1, 2.2], gap="large")
         with c1:
@@ -1312,10 +1321,10 @@ with right:
             if cover_bytes:
                 st.image(cover_bytes, use_container_width=True)
             else:
-                st.info("No se detecta portada embebida. Para mantener el flujo simple, el análisis usa solo una pista por vez y no permite adjuntar archivos extra desde esta pantalla.")
+                st.info("No se detecta portada embebida en el archivo.")
 
         # Precompute LUFS series for synced display (quick)
-        y_full, sr_full = load_audio_any(audio_bytes, uploaded.name)
+        y_full, sr_full = load_audio_any(audio_bytes, track_name)
         l_full = y_full[:, 0]
         r_full = y_full[:, 1] if y_full.shape[1] > 1 else y_full[:, 0]
         mono_full = 0.5 * (l_full + r_full)
@@ -1340,12 +1349,12 @@ with right:
             peak_dbfs = _db(_peak(mono))
             rms_dbfs = _db(_rms(mono))
             try:
-                mono_os = librosa.resample(mono.astype(np.float32), orig_sr=sr, target_sr=sr*2, res_type="soxr_hq")
+                mono_os = librosa.resample(mono.astype(np.float32), orig_sr=sr_full, target_sr=sr_full*4, res_type="kaiser_best")
                 tp_dbfs = _db(float(np.max(np.abs(mono_os))))
             except Exception:
                 tp_dbfs = peak_dbfs
 
-            render_player_with_eq(audio_bytes, uploaded.type or "audio/wav", lufs_t, lufs_v, lufs_max, bpm_est, key_est, peak_dbfs, rms_dbfs, tp_dbfs)
+            render_player_with_eq(audio_bytes, track_type, lufs_t, lufs_v, lufs_max, bpm_est, key_est, peak_dbfs, rms_dbfs, tp_dbfs)
 
         dur = len(mono_full) / sr_full
         start_s, end_s = st.slider(
@@ -1366,18 +1375,16 @@ with right:
         with colB:
             st.markdown('<span class="badge">EQ LIVE</span><span class="badge">PDF</span><span class="badge">LUFS</span>', unsafe_allow_html=True)
     else:
-        st.info("Sube un audio para ver reproductor, EQ en tiempo real, portada, waveform y activar el análisis.")
+        st.info("Sube una sola pista para ver la previsualización, la forma de onda y activar el análisis técnico.")
     st.markdown('</div>', unsafe_allow_html=True)
 
 # =========================
 # ANALYSIS + REPORT
 # =========================
 if uploaded and analyze_btn:
-    audio_bytes = uploaded.getvalue()
-    if len(audio_bytes) > MAX_UPLOAD_BYTES:
-        st.error(f"El archivo supera el límite de {MAX_UPLOAD_MB} MB. Sube una pista de hasta {MAX_UPLOAD_MB} MB.")
-        st.stop()
-    y, sr = load_audio_any(audio_bytes, uploaded.name)
+    audio_bytes = st.session_state.track_bytes
+    track_name = st.session_state.track_name
+    y, sr = load_audio_any(audio_bytes, track_name)
     l = y[:, 0]
     r = y[:, 1] if y.shape[1] > 1 else y[:, 0]
     mono = 0.5 * (l + r)
@@ -1398,54 +1405,6 @@ if uploaded and analyze_btn:
     with st.spinner("Analizando master (KPIs + espectro + loudness + estéreo + diagnóstico)..."):
         result = analyze_audio(mono_seg, l_seg, r_seg, sr)
 
-    # =========================
-    # Comparador A/B
-    # =========================
-    if 'ab_uploaded' in globals() and ab_uploaded is not None:
-        st.markdown("## 🔁 Comparador A/B (Original vs Master)")
-        try:
-            ab_bytes = ab_uploaded.getvalue()
-            ab_audio, ab_sr = load_audio_from_bytes(ab_bytes)
-            # Re-muestreo si hace falta
-            if ab_sr != sr:
-                ab_audio = librosa.resample(ab_audio.astype(np.float32), orig_sr=ab_sr, target_sr=sr).astype(np.float64)
-                ab_sr = sr
-            ab_mono, ab_left, ab_right = to_mono_lr(ab_audio)
-
-            ab_result = analyze_audio(ab_mono, ab_left, ab_right, ab_sr)
-
-            # KPIs comparativos
-            c1, c2, c3, c4 = st.columns(4)
-            def _d(a,b):
-                try:
-                    if a is None or b is None or (isinstance(a,float) and math.isnan(a)) or (isinstance(b,float) and math.isnan(b)):
-                        return "n/a"
-                    return f"{(b-a):+.1f}"
-                except Exception:
-                    return "n/a"
-
-            c1.metric("LUFS (I) A → B", f"{result.kpis.lufs_i:.1f} → {ab_result.kpis.lufs_i:.1f}", delta=_d(result.kpis.lufs_i, ab_result.kpis.lufs_i))
-            c2.metric("True Peak A → B", f"{result.kpis.true_peak_dbfs_approx:.1f} → {ab_result.kpis.true_peak_dbfs_approx:.1f}", delta=_d(result.kpis.true_peak_dbfs_approx, ab_result.kpis.true_peak_dbfs_approx))
-            c3.metric("Crest A → B", f"{result.kpis.crest_db:.1f} → {ab_result.kpis.crest_db:.1f}", delta=_d(result.kpis.crest_db, ab_result.kpis.crest_db))
-            c4.metric("Stereo Corr A → B", f"{result.kpis.stereo_corr:.2f} → {ab_result.kpis.stereo_corr:.2f}", delta=_d(result.kpis.stereo_corr, ab_result.kpis.stereo_corr))
-
-            # Espectro superpuesto
-            fig = plt.figure()
-            f1, p1 = welch(result_mono_for_plots, fs=sr, nperseg=min(8192, len(result_mono_for_plots)))
-            f2, p2 = welch(ab_mono, fs=sr, nperseg=min(8192, len(ab_mono)))
-            plt.semilogx(f1, 10*np.log10(np.maximum(p1, 1e-20)), label=f"A: {uploaded.name}", linewidth=1.2)
-            plt.semilogx(f2, 10*np.log10(np.maximum(p2, 1e-20)), label=f"B: {ab_uploaded.name}", linewidth=1.2)
-            plt.title("Espectro superpuesto A/B (PSD)")
-            plt.xlabel("Frecuencia (Hz)")
-            plt.ylabel("dB")
-            plt.grid(True, which="both")
-            plt.xlim(20, min(20000, sr/2))
-            plt.legend()
-            st.pyplot(fig, use_container_width=True)
-
-            st.caption("Tip: usa A=Original y B=Master para ver diferencias claras en loudness, dinámica y balance tonal.")
-        except Exception as e:
-            st.error(f"No se pudo comparar A/B: {e}")
 
     k = result.kpis
 
@@ -1525,31 +1484,44 @@ if uploaded and analyze_btn:
     st.markdown('</div>', unsafe_allow_html=True)
 
     st.markdown('<div class="card">', unsafe_allow_html=True)
-    st.subheader("🖨️ Informe PDF (opcional)")
-    st.caption("Para ahorrar recursos, el PDF se genera solo cuando lo pides.")
+    st.subheader("🖨️ Descargar informe (PDF)")
+    st.caption("El informe PDF se genera automáticamente al terminar el análisis.")
 
-    if st.button("Generar informe PDF", use_container_width=True):
-        with st.spinner("Generando PDF..."):
-            embedded_cover = extract_cover_bytes(audio_bytes, uploaded.name)
-            final_cover = embedded_cover if embedded_cover else st.session_state.manual_cover_bytes
+    embedded_cover = extract_cover_bytes(audio_bytes, track_name)
+    final_cover = embedded_cover
 
-            st.session_state.generated_pdf_bytes = render_pdf_wave_music_studio(
-                track_title=os.path.splitext(uploaded.name)[0],
-                client_name=client_name,
-                result=result,
-                cover_bytes=final_cover,
-                logo_path=LOGO_PATH,
-                engineer_name=ENGINEER
-            )
-            st.session_state.generated_pdf_name = uploaded.name
-        st.success("PDF generado. Ya puedes descargarlo.")
+    pdf_bytes = render_pdf_wave_music_studio(
+        track_title=os.path.splitext(track_name)[0],
+        client_name=client_name,
+        result=result,
+        cover_bytes=final_cover,
+        logo_path=LOGO_PATH,
+        engineer_name=ENGINEER
+    )
 
-    if st.session_state.get("generated_pdf_bytes") and st.session_state.get("generated_pdf_name") == uploaded.name:
-        st.download_button(
-            label="⬇️ Descargar informe PDF",
-            data=st.session_state.generated_pdf_bytes,
-            file_name=f"{os.path.splitext(uploaded.name)[0]}_WAVE_MUSIC_STUDIO_Report.pdf",
-            mime="application/pdf",
-            use_container_width=True
-        )
+    st.session_state.pdf_bytes = pdf_bytes
+    st.session_state.pdf_name = f"{os.path.splitext(track_name)[0]}_WAVE_MUSIC_STUDIO_Report.pdf"
+
+    st.download_button(
+        label="🖨️ DESCARGAR INFORME PDF",
+        data=st.session_state.pdf_bytes,
+        file_name=st.session_state.pdf_name,
+        mime="application/pdf",
+        use_container_width=True
+    )
+    st.markdown('</div>', unsafe_allow_html=True)
+
+# Mantener visible la descarga del PDF aunque la app se vuelva a ejecutar
+if st.session_state.get("pdf_bytes") and not analyze_btn:
+    st.markdown('<div class="card">', unsafe_allow_html=True)
+    st.subheader("🖨️ Descargar informe (PDF)")
+    st.caption("Tu informe ya está listo. Puedes descargarlo de nuevo desde aquí.")
+    st.download_button(
+        label="🖨️ DESCARGAR INFORME PDF",
+        data=st.session_state.pdf_bytes,
+        file_name=st.session_state.pdf_name or "WAVE_MUSIC_STUDIO_Report.pdf",
+        mime="application/pdf",
+        use_container_width=True,
+        key="persistent_pdf_download"
+    )
     st.markdown('</div>', unsafe_allow_html=True)
